@@ -5,6 +5,7 @@ from selenium.webdriver.chrome.options import Options
 from dotenv import dotenv_values
 import os
 import mtranslate as mt
+import time
 
 # Load environment variables
 env_vars = dotenv_values(".env")
@@ -17,33 +18,37 @@ HtmlCode = '''<!DOCTYPE html>
     <title>Speech Recognition</title>
 </head>
 <body>
-    <button id="start" onclick="startRecognition()">Start Recognition</button>
-    <button id="end" onclick="stopRecognition()">Stop Recognition</button>
     <p id="output"></p>
     <script>
         const output = document.getElementById('output');
-        let recognition;
+        let recognition = new webkitSpeechRecognition() || new SpeechRecognition();
+        recognition.lang = '';
+        recognition.continuous = true;
+        recognition.interimResults = true;
 
-        function startRecognition() {
-            recognition = new webkitSpeechRecognition() || new SpeechRecognition();
-            recognition.lang = '';
-            recognition.continuous = true;
+        let buffer = "";
+        let lastSpoken = Date.now();
 
-            recognition.onresult = function(event) {
-                const transcript = event.results[event.results.length - 1][0].transcript;
-                output.textContent += transcript;
-            };
+        recognition.onresult = function(event) {
+            const transcript = event.results[event.results.length - 1][0].transcript;
+            buffer = transcript;
+            lastSpoken = Date.now();
+            output.textContent = buffer;
+        };
 
-            recognition.onend = function() {
-                recognition.start();
-            };
+        recognition.onend = function() {
             recognition.start();
-        }
+        };
 
-        function stopRecognition() {
-            recognition.stop();
-            output.innerHTML = "";
-        }
+        recognition.start();
+
+        // Timeout reset if silence for 60 seconds
+        setInterval(() => {
+            if (Date.now() - lastSpoken > 60000) {
+                buffer = "";
+                output.textContent = "";
+            }
+        }, 1000);
     </script>
 </body>
 </html>'''
@@ -62,14 +67,14 @@ Link = f"{current_dir}/Data/Voice.html"
 
 # Set Chrome options for Chrome Beta
 chrome_options = Options()
-chrome_options.binary_location = r"C:\Program Files\Google\Chrome Beta\Application\chrome.exe"  # <-- Chrome Beta path
+chrome_options.binary_location = r"C:\\Program Files\\Google\\Chrome Beta\\Application\\chrome.exe"
 chrome_options.add_argument("--use-fake-ui-for-media-stream")
 chrome_options.add_argument("--use-fake-device-for-media-stream")
-chrome_options.add_argument("--headless=new")  # Modern headless mode
+chrome_options.add_argument("--headless=new")
 chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.142.86 Safari/537.36")
 
 # Set manually downloaded ChromeDriver for Chrome Beta
-chrome_driver_path = r"D:\VARSI\chromedriver-win64 (2)\chromedriver-win64\chromedriver.exe"
+chrome_driver_path = r"D:\\VARSI\\chromedriver-win64 (2)\\chromedriver-win64\\chromedriver.exe"
 service = Service(executable_path=chrome_driver_path)
 driver = webdriver.Chrome(service=service, options=chrome_options)
 
@@ -105,23 +110,36 @@ def UniversalTranslator(Text):
 
 def SpeechRecognition():
     driver.get("file:///" + Link)
-    driver.find_element(By.ID, "start").click()
+    buffer = ""
+    triggered = False
+    start_time = None
 
     while True:
         try:
-            Text = driver.find_element(By.ID, "output").text
-            if Text:
-                driver.find_element(By.ID, "end").click()
-                if InputLanguage.lower() == "en" or "en" in InputLanguage.lower():
-                    return QueryModifier(Text)
-                else:
-                    SetAssistantStatus("Translating...")
-                    return QueryModifier(UniversalTranslator(Text))
+            Text = driver.find_element(By.ID, "output").text.strip().lower()
+
+            if not triggered and "k" in Text:
+                triggered = True
+                start_time = time.time()
+                print("Wake word 'K' detected. Listening for command...")
+                SetAssistantStatus("Listening...")
+
+            elif triggered:
+                if time.time() - start_time > 2 and len(Text) > 2:
+                    driver.execute_script("document.getElementById('output').innerText = ''")
+                    triggered = False
+                    if InputLanguage.lower() == "en" or "en" in InputLanguage.lower():
+                        return QueryModifier(Text)
+                    else:
+                        SetAssistantStatus("Translating...")
+                        return QueryModifier(UniversalTranslator(Text))
         except Exception:
             pass
+        time.sleep(0.1)
 
 # Run the assistant
 if __name__ == "__main__":
     while True:
         Text = SpeechRecognition()
         print(Text)
+
